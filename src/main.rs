@@ -1,89 +1,78 @@
 #![no_std]
 #![no_main]
 #![feature(type_alias_impl_trait)]
+#![allow(unused_variables)]
+#![deny(unsafe_code)]
 
-mod devices;
-mod units;
-
-use embassy_executor::Executor;
-use embassy_time::{Duration, Timer};
-use esp32_hal::clock::Clocks;
-use esp32_hal::peripherals::{RTC_CNTL, TIMG0, TIMG1};
-use esp32_hal::system::PeripheralClockControl;
-use esp32_hal::{
-    clock::ClockControl, embassy, ledc::LEDC, peripherals::Peripherals, prelude::*,
-    timer::TimerGroup, Rtc, IO,
-};
 use esp_backtrace as _;
-use static_cell::StaticCell;
+use embassy_executor::Spawner;
+use embassy_time::{Duration, Timer};
+use esp_hal::{clock::ClockControl, embassy, IO, ledc, peripherals::Peripherals, prelude::*};
+use esp_hal::timer::TimerGroup;
+use esp_println::println;
+use crate::devices::FanController;
 
-static EXECUTOR: StaticCell<Executor> = StaticCell::new();
+pub mod devices;
 
-#[entry]
-fn main() -> ! {
+#[main]
+async fn main(spawner: Spawner) {
     let peripherals = Peripherals::take();
-    let mut system = peripherals.DPORT.split();
-    let clocks = ClockControl::boot_defaults(system.clock_control).freeze();
+    let system = peripherals.SYSTEM.split();
 
-    setup_timers(
-        peripherals.TIMG0,
-        peripherals.TIMG1,
-        peripherals.RTC_CNTL,
-        &clocks,
-        &mut system.peripheral_clock_control,
-    );
+    let clocks = ClockControl::max(system.clock_control).freeze();
+
+    embassy::init(&clocks, TimerGroup::new(peripherals.TIMG0, &clocks));
+
+
+
 
     let io = IO::new(peripherals.GPIO, peripherals.IO_MUX);
-    let ledc = LEDC::new(
-        peripherals.LEDC,
-        &clocks,
-        &mut system.peripheral_clock_control,
-    );
 
-    devices::FanDevice::new(io.pins.gpio33, io.pins.gpio34, ledc);
+    let pwm_pin = io.pins.gpio33.degrade();
+    let rpm_pin = io.pins.gpio34.degrade();
 
-    let executor = EXECUTOR.init(Executor::new());
 
-    executor.run(|spawner| {
-        spawner.spawn(run1()).unwrap();
-        spawner.spawn(run2()).unwrap();
-    })
-}
 
-fn setup_timers(
-    timg0: TIMG0,
-    timg1: TIMG1,
-    rtc_cntl: RTC_CNTL,
-    clocks: &Clocks,
-    peripheral_clock_control: &mut PeripheralClockControl,
-) {
-    let timer_group0 = TimerGroup::new(timg0, &clocks, peripheral_clock_control);
 
-    let timer_group1 = TimerGroup::new(timg1, &clocks, peripheral_clock_control);
+    let ledc = ledc::LEDC::new(peripherals.LEDC, &clocks);
 
-    let mut rtc = Rtc::new(rtc_cntl);
-    let mut wdt0 = timer_group0.wdt;
-    let mut wdt1 = timer_group1.wdt;
+    let mut hstimer0 = ledc.get_timer::<ledc::HighSpeed>(ledc::timer::Number::Timer0);
 
-    rtc.rwdt.disable();
-    wdt0.disable();
-    wdt1.disable();
+    hstimer0.configure(ledc::timer::config::Config {
+        duty: ledc::timer::config::Duty::Duty10Bit,
+        clock_source: ledc::timer::HSClockSource::APBClk,
+        frequency: 25u32.kHz(),
+    }).unwrap();
 
-    embassy::init(&clocks, timer_group0.timer0);
-}
 
-#[embassy_executor::task]
-async fn run1() {
+
+    let mut pwm_channel = ledc.get_channel(ledc::channel::Number::Channel0, pwm_pin);
+
+    pwm_channel.configure(ledc::channel::config::Config {
+        timer: &hstimer0,
+        duty_pct: 10,
+        pin_config: ledc::channel::config::PinConfig::OpenDrain,
+    }).unwrap();
+
+
+
+
+
+
+
+    let fan_controller = FanController::new(pwm_channel);
+
+    fan_controller.get_fan_speed();
+
+
+
+
+
+    println!("Hello world!");
+
     loop {
-        esp_println::println!("Hello world from embassy using esp-hal-async!");
-        Timer::after(Duration::from_millis(1_000)).await;
-    }
-}
+        println!("Loop...");
 
-#[embassy_executor::task]
-async fn run2() {
-    loop {
-        esp_println::println!("Bing!");
-        Timer::after(Duration::from_millis(5_000)).await;
+        Timer::after(Duration::from_millis(500u64)).await;
     }
 }
