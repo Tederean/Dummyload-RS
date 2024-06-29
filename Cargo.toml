@@ -30,19 +30,17 @@ embassy-executor = { version = "0.5.0", features = [
     "integrated-timers",
     "executor-thread",
 ] }
-embassy-time = { version = "0.3.0", features = [] }
-embassy-sync = { version = "0.6.0", features = [] }
-embassy-futures = { version = "0.1.1", features = [] }
-embedded-hal = { version = "1.0.0", features = [] }
-embedded-hal-async = { version = "1.0.0", features = [] }
-embedded-hal-nb = { version = "1.0.0", features = [] }
-uom = { version = "0.36.0", default-features = false, features = [
-    "si",
-    "f32"
-] }
+
+embassy-time = "0.3.0"
+embassy-sync = "0.6.0"
+embassy-futures = "0.1.1"
+embedded-hal = "1.0.0"
+embedded-hal-async = "1.0.0"
+embedded-hal-nb = "1.0.0"
+uom = { version = "0.36.0", default-features = false, features = ["si", "f32"] }
 refinement = { git = "https://github.com/Tederean/refinement-rs" }
 onewire = "0.3.13"
-
+static_cell = "2.1.0"
 [profile.dev]
 # Rust debug is too slow. 
 # For debug builds always builds with some optimization
