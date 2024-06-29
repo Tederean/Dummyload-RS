@@ -10,9 +10,16 @@ use embassy_time::{Duration, Timer};
 use esp_hal::{clock::ClockControl, embassy, IO, ledc, peripherals::Peripherals, prelude::*};
 use esp_hal::timer::TimerGroup;
 use esp_println::println;
-use crate::devices::FanController;
+use crate::tasks::fan_speed;
 
-pub mod devices;
+mod tasks;
+
+
+
+
+
+
+
 
 #[main]
 async fn main(spawner: Spawner) {
@@ -23,18 +30,17 @@ async fn main(spawner: Spawner) {
 
     embassy::init(&clocks, TimerGroup::new(peripherals.TIMG0, &clocks));
 
+    esp_hal::interrupt::enable(
+        esp_hal::peripherals::Interrupt::GPIO,
+        esp_hal::interrupt::Priority::Priority1,
+    ).unwrap();
+
 
 
 
     let io = IO::new(peripherals.GPIO, peripherals.IO_MUX);
-
-    let pwm_pin = io.pins.gpio33.degrade();
-    let rpm_pin = io.pins.gpio34.degrade();
-
-
-
-
     let ledc = ledc::LEDC::new(peripherals.LEDC, &clocks);
+
 
     let mut hstimer0 = ledc.get_timer::<ledc::HighSpeed>(ledc::timer::Number::Timer0);
 
@@ -44,8 +50,7 @@ async fn main(spawner: Spawner) {
         frequency: 25u32.kHz(),
     }).unwrap();
 
-
-
+    let pwm_pin = io.pins.gpio33.degrade();
     let mut pwm_channel = ledc.get_channel(ledc::channel::Number::Channel0, pwm_pin);
 
     pwm_channel.configure(ledc::channel::config::Config {
@@ -56,13 +61,15 @@ async fn main(spawner: Spawner) {
 
 
 
+    let rpm_pin = io.pins.gpio34.into_floating_input().degrade();
+
+    spawner.spawn(fan_speed::task(rpm_pin)).unwrap();
 
 
 
 
-    let fan_controller = FanController::new(pwm_channel);
 
-    fan_controller.get_fan_speed();
+
 
 
 
