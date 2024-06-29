@@ -14,11 +14,10 @@ pub static FAN_SPEED_CHANGED: PubSubChannel::<CriticalSectionRawMutex, Option<uo
 pub async fn task(mut rpm_pin: AnyPin<Input<Floating>, InputOnlyAnalogPinType>) -> ! {
     let publisher = FAN_SPEED_CHANGED.publisher().unwrap();
 
-    const TIMEOUT: Duration = Duration::from_millis(300);
-    const DELAY: Duration = Duration::from_millis(1000);
+    let mut time = Instant::now();
 
     loop {
-        let timeout_future = Timer::after(TIMEOUT);
+        let timeout_future = Timer::after(Duration::from_millis(300));
         let elapsed_us_future = measure_cycle_us(&mut rpm_pin);
 
         match select(timeout_future, elapsed_us_future).await {
@@ -34,7 +33,9 @@ pub async fn task(mut rpm_pin: AnyPin<Input<Floating>, InputOnlyAnalogPinType>) 
             }
         }
 
-        Timer::after(DELAY).await;
+        time += Duration::from_millis(1000);
+
+        Timer::after(time - Instant::now()).await;
     }
 }
 

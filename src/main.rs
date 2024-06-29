@@ -10,16 +10,9 @@ use embassy_time::{Duration, Timer};
 use esp_hal::{clock::ClockControl, embassy, IO, ledc, peripherals::Peripherals, prelude::*};
 use esp_hal::timer::TimerGroup;
 use esp_println::println;
-use crate::tasks::fan_speed;
+use crate::tasks::{fan_speed, temperature};
 
 mod tasks;
-
-
-
-
-
-
-
 
 #[main]
 async fn main(spawner: Spawner) {
@@ -61,17 +54,17 @@ async fn main(spawner: Spawner) {
 
 
 
+
+
     let rpm_pin = io.pins.gpio34.into_floating_input().degrade();
 
     spawner.spawn(fan_speed::task(rpm_pin)).unwrap();
 
 
 
+    let one_wire_pin = io.pins.gpio25.into_open_drain_output();
 
-
-
-
-
+    spawner.spawn(temperature::task(one_wire_pin)).unwrap();
 
 
 

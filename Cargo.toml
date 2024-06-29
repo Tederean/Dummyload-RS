@@ -41,7 +41,7 @@ uom = { version = "0.36.0", default-features = false, features = [
     "f32"
 ] }
 refinement = { git = "https://github.com/Tederean/refinement-rs" }
-#esp-hal-rmt-onewire = "0.1.0"
+onewire = "0.3.13"
 
 [profile.dev]
 # Rust debug is too slow. 

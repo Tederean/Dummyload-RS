@@ -1,4 +1,3 @@
-
 #[embassy_executor::task]
 pub async fn fan_controller_task(
     //pwm_channel: Channel<'_, HighSpeed, AnyPin<Unknown, InputOutputAnalogPinType>>,
