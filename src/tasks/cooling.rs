@@ -14,6 +14,10 @@ use esp_hal::gpio::{AnyPin, Floating, GpioPin, Input, InputOnlyAnalogPinType, In
 use esp_hal::ledc::channel::Channel;
 use esp_hal::ledc::HighSpeed;
 use one_wire_bus::{Address, OneWire, OneWireError};
+use uom::si::f32::{ThermodynamicTemperature, AngularVelocity, Time, Ratio, Angle};
+use uom::si::thermodynamic_temperature;
+use uom::si::time;
+use uom::si::ratio;
 
 const SUBSCRIBER_COUNT: usize = 1;
 
@@ -21,9 +25,9 @@ pub static CHANNEL: PubSubChannel::<CriticalSectionRawMutex, ChannelUpdate, 1, S
 
 #[derive(Clone, Copy, Debug)]
 pub struct ChannelUpdate {
-    fan_power: uom::si::f32::Ratio,
-    fan_speed: Result<uom::si::f32::AngularVelocity, FanSpeedError>,
-    temperature: Result<uom::si::f32::ThermodynamicTemperature, TemperatureError>,
+    pub fan_power: Ratio,
+    pub fan_speed: Result<AngularVelocity, FanSpeedError>,
+    pub temperature: Result<ThermodynamicTemperature, TemperatureError>,
 }
 
 #[derive(Clone, Copy, Debug)]
@@ -39,18 +43,20 @@ pub enum TemperatureError {
 }
 
 type OpenDrainPin = GpioPin<Output<OpenDrain>, 25>;
+type PwmChannel = Channel<'static, HighSpeed, AnyPin<Unknown, InputOutputAnalogPinType>>;
+type FloatingInputPin = AnyPin<Input<Floating>, InputOnlyAnalogPinType>;
+type OneWireMutex = Mutex<CriticalSectionRawMutex, OneWireData>;
 
-struct CriticalSectionData {
-    one_wire_bus: RefCell<OneWire<OpenDrainPin>>,
-    first_sensor: Ds18b20,
-    second_sensor: Ds18b20,
+struct OneWireData {
+    bus: RefCell<OneWire<OpenDrainPin>>,
+    sensors: [Ds18b20; 2],
 }
 
 #[embassy_executor::task]
 pub async fn task(
     one_wire_pin: OpenDrainPin,
-    mut rpm_pin: AnyPin<Input<Floating>, InputOnlyAnalogPinType>,
-    mut pwm_channel: Channel<'static, HighSpeed, AnyPin<Unknown, InputOutputAnalogPinType>>,
+    mut rpm_pin: FloatingInputPin,
+    mut pwm_channel: PwmChannel,
     ) -> ! {
     let publisher = CHANNEL.publisher().unwrap();
 
@@ -76,34 +82,36 @@ pub async fn task(
 
         let now = Instant::now();
 
-        if now < time {
+        if now < time { // 'time - now' panics if 'now' is larger than 'time'.
             Timer::after(time - now).await;
         }
     }
 }
 
-fn setup_one_wire(one_wire_pin: OpenDrainPin, delay: &mut Delay) -> Result<Mutex::<CriticalSectionRawMutex, CriticalSectionData>, OneWireError<Infallible>> {
-    let critical_section_data = CriticalSectionData {
-        one_wire_bus: RefCell::new(OneWire::new(one_wire_pin)?),
-        first_sensor: Ds18b20::new::<Infallible>(Address(12970953402624835368u64))?, // or maybe 2954247596452151988
-        second_sensor: Ds18b20::new::<Infallible>(Address(15132681223968980776))?, // or maybe 2954331210875470546
-    };
+fn setup_one_wire(one_wire_pin: OpenDrainPin, delay: &mut Delay) -> Result<OneWireMutex, OneWireError<Infallible>> {
 
     // Use critical section mutex in order to disable interrupts.
     // OneWire protocol is time-critical and must always be running with disabled interrupts.
 
-    let one_wire = Mutex::<CriticalSectionRawMutex, CriticalSectionData>::new(critical_section_data);
+    let one_wire_mutex = OneWireMutex::new(OneWireData {
+        bus: RefCell::new(OneWire::new(one_wire_pin)?),
+        sensors: [
+            Ds18b20::new::<Infallible>(Address(12970953402624835368u64))?, // or maybe 2954247596452151988
+            Ds18b20::new::<Infallible>(Address(15132681223968980776u64))? // or maybe 2954331210875470546
+        ],
+    });
 
-    one_wire.lock(|data| {
-        let mut one_wire_bus = data.one_wire_bus.borrow_mut();
+    one_wire_mutex.lock(|one_wire| {
+        let mut one_wire_bus = one_wire.bus.borrow_mut();
 
-        setup_ds18b20(&mut one_wire_bus, &data.first_sensor, delay)?;
-        setup_ds18b20(&mut one_wire_bus, &data.second_sensor, delay)?;
+        for sensor in &one_wire.sensors {
+            setup_ds18b20(&mut one_wire_bus, sensor, delay)?;
+        }
 
         Ok(())
     })?;
 
-    Ok(one_wire)
+    Ok(one_wire_mutex)
 }
 
 #[inline]
@@ -111,36 +119,43 @@ fn setup_ds18b20(one_wire_bus: &mut OneWire<OpenDrainPin>, sensor: &Ds18b20, del
     sensor.set_config(0, 60, Resolution::Bits10, one_wire_bus, delay)
 }
 
-async fn measure_temperature(one_wire_result: &Result<Mutex::<CriticalSectionRawMutex, CriticalSectionData>, OneWireError<Infallible>>, delay: &mut Delay) -> Result<uom::si::f32::ThermodynamicTemperature, TemperatureError> {
+async fn measure_temperature(one_wire_result: &Result<OneWireMutex, OneWireError<Infallible>>, delay: &mut Delay) -> Result<ThermodynamicTemperature, TemperatureError> {
     match one_wire_result {
         Err(err) => Err(TemperatureError::SetupError(err.clone())),
-        Ok(one_wire) => {
-            one_wire.lock(|data| {
-                let mut one_wire_bus = data.one_wire_bus.borrow_mut();
+        Ok(one_wire_mutex) => {
+            one_wire_mutex.lock(|one_wire| {
+                let mut one_wire_bus = one_wire.bus.borrow_mut();
 
-                data.first_sensor.start_temp_measurement(&mut one_wire_bus, delay)?;
-                data.second_sensor.start_temp_measurement(&mut one_wire_bus, delay)?;
+                for sensor in &one_wire.sensors {
+                    sensor.start_temp_measurement(&mut one_wire_bus, delay)?;
+                }
 
                 Ok(())
             }).map_err(|err| TemperatureError::StartMeasurementError(err))?;
 
             Timer::after(Duration::from_millis(190)).await; // Datasheet: 187.5 ms
 
-            let temperature_degree_celsius = one_wire.lock(|data| {
-                let mut one_wire_bus = data.one_wire_bus.borrow_mut();
+            one_wire_mutex.lock(|one_wire| {
+                let mut one_wire_bus = one_wire.bus.borrow_mut();
 
-                let first_temperature = data.first_sensor.read_data(&mut one_wire_bus, delay)?;
-                let second_temperature = data.second_sensor.read_data(&mut one_wire_bus, delay)?;
+                let mut temperature_degree_celsius = ThermodynamicTemperature::new::<thermodynamic_temperature::kelvin>(0.0f32).get::<thermodynamic_temperature::degree_celsius>();
 
-                Ok(f32::max(first_temperature.temperature, second_temperature.temperature))
-            }).map_err(|err| TemperatureError::ReadMeasurementError(err))?;
+                for sensor in &one_wire.sensors {
+                    let ds18b20_result = sensor.read_data(&mut one_wire_bus, delay)?;
 
-            Ok(uom::si::f32::ThermodynamicTemperature::new::<uom::si::thermodynamic_temperature::degree_celsius>(temperature_degree_celsius))
-        },
+                    if ds18b20_result.temperature > temperature_degree_celsius {
+                        temperature_degree_celsius = ds18b20_result.temperature;
+                    }
+                }
+
+                Ok(ThermodynamicTemperature::new::<thermodynamic_temperature::degree_celsius>(temperature_degree_celsius))
+
+            }).map_err(|err| TemperatureError::ReadMeasurementError(err))
+        }
     }
 }
 
-async fn measure_fan_speed(rpm_pin: &mut AnyPin<Input<Floating>, InputOnlyAnalogPinType>) -> Result<uom::si::f32::AngularVelocity, FanSpeedError> {
+async fn measure_fan_speed(rpm_pin: &mut FloatingInputPin) -> Result<AngularVelocity, FanSpeedError> {
     let timeout_future = Timer::after(Duration::from_millis(300));
     let elapsed_us_future = measure_cycle_us(rpm_pin);
 
@@ -149,16 +164,16 @@ async fn measure_fan_speed(rpm_pin: &mut AnyPin<Input<Floating>, InputOnlyAnalog
             Err(FanSpeedError::SignalTimeout)
         },
         Second(elapsed_us) => {
-            let elapsed_time = uom::si::f32::Time::new::<uom::si::time::microsecond>(elapsed_us as f32);
+            let elapsed_time = Time::new::<time::microsecond>(elapsed_us as f32);
 
-            let fan_speed = uom::si::f32::Angle::HALF_TURN / elapsed_time;
+            let fan_speed = Angle::HALF_TURN / elapsed_time;
 
             Ok(fan_speed.into())
         }
     }
 }
 
-async fn measure_cycle_us(rpm_pin: &mut AnyPin<Input<Floating>, InputOnlyAnalogPinType>) -> u64 {
+async fn measure_cycle_us(rpm_pin: &mut FloatingInputPin) -> u64 {
     rpm_pin.wait_for_rising_edge().await.unwrap();
 
     let first_rising_edge = Instant::now();
@@ -170,22 +185,19 @@ async fn measure_cycle_us(rpm_pin: &mut AnyPin<Input<Floating>, InputOnlyAnalogP
     (second_rising_edge - first_rising_edge).as_micros()
 }
 
-fn adjust_fan_power(
-    pwm_channel: &mut Channel<'static, HighSpeed, AnyPin<Unknown, InputOutputAnalogPinType>>,
-    temperature_result: &Result<uom::si::f32::ThermodynamicTemperature, TemperatureError>,
-    ) -> uom::si::f32::Ratio {
+fn adjust_fan_power(pwm_channel: &mut PwmChannel, temperature_result: &Result<ThermodynamicTemperature, TemperatureError>) -> Ratio {
         match temperature_result {
             Ok(temperature) => {
-                let duty_cycle = f32::clamp(3.5f32 * temperature.get::<uom::si::thermodynamic_temperature::degree_celsius>() - 75.0f32, 30.0f32, 100.0f32);
+                let duty_cycle = f32::clamp(3.5f32 * temperature.get::<thermodynamic_temperature::degree_celsius>() - 75.0f32, 30.0f32, 100.0f32);
 
                 pwm_channel.set_duty_cycle_percent(duty_cycle as u8).unwrap();
 
-                uom::si::f32::Ratio::new::<uom::si::ratio::percent>(duty_cycle)
+                Ratio::new::<ratio::percent>(duty_cycle)
             },
             Err(_) => {
                 pwm_channel.set_duty_cycle_percent(100).unwrap();
 
-                uom::si::f32::Ratio::new::<uom::si::ratio::percent>(100.0f32)
+                Ratio::new::<ratio::percent>(100.0f32)
             },
         }
 }

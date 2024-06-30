@@ -5,7 +5,6 @@
 
 use esp_backtrace as _;
 use embassy_executor::Spawner;
-use embassy_time::{Duration, Timer};
 use esp_hal::{clock::ClockControl, embassy, IO, ledc, peripherals::Peripherals, prelude::*};
 use esp_hal::gpio::{AnyPin, InputOutputAnalogPinType, Unknown};
 use esp_hal::ledc::channel::Channel;
@@ -33,7 +32,6 @@ async fn main(spawner: Spawner) -> ! {
     let io = IO::new(peripherals.GPIO, peripherals.IO_MUX);
     let ledc = ledc::LEDC::new(peripherals.LEDC, &clocks);
 
-
     let mut hstimer0 = ledc.get_timer::<ledc::HighSpeed>(ledc::timer::Number::Timer0);
 
     hstimer0.configure(ledc::timer::config::Config {
@@ -47,20 +45,32 @@ async fn main(spawner: Spawner) -> ! {
 
     pwm_channel.configure(ledc::channel::config::Config {
         timer: &hstimer0,
-        duty_pct: 10,
+        duty_pct: 100,
         pin_config: ledc::channel::config::PinConfig::OpenDrain,
     }).unwrap();
 
     let rpm_pin = io.pins.gpio34.into_floating_input().degrade();
     let one_wire_pin = io.pins.gpio25.into_open_drain_output();
 
+    let mut subscriber = cooling::CHANNEL.subscriber().unwrap();
+
     spawner.spawn(cooling::task(one_wire_pin, rpm_pin, unsafe { core::mem::transmute::<Channel<'_, HighSpeed, AnyPin<Unknown, InputOutputAnalogPinType>>, Channel<'static, HighSpeed, AnyPin<Unknown, InputOutputAnalogPinType>>>(pwm_channel) })).unwrap();
 
-    println!("Hello world!");
-
     loop {
-        println!("Loop...");
+        let update = subscriber.next_message_pure().await;
 
-        Timer::after(Duration::from_millis(500u64)).await;
+        println!("Fan Power: {0} %", update.fan_power.get::<uom::si::ratio::percent>());
+
+        match update.fan_speed {
+            Ok(fan_speed) => println!("Fan Speed: {0} RPM", fan_speed.get::<uom::si::angular_velocity::revolution_per_minute>()),
+            Err(_) => println!("Fan Speed: Error"),
+        }
+
+        match update.temperature {
+            Ok(temperature) => println!("Temperature: {0} °C", temperature.get::<uom::si::thermodynamic_temperature::degree_celsius>()),
+            Err(_) => println!("Fan Power: Error"),
+        }
+
+        println!();
     }
 }
