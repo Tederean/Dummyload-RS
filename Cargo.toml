@@ -39,8 +39,9 @@ embedded-hal-async = "1.0.0"
 embedded-hal-nb = "1.0.0"
 uom = { version = "0.36.0", default-features = false, features = ["si", "f32"] }
 refinement = { git = "https://github.com/Tederean/refinement-rs" }
-onewire = "0.3.13"
-static_cell = "2.1.0"
+ds18b20 = "0.1.1"
+one-wire-bus = "0.1.1"
+
 [profile.dev]
 # Rust debug is too slow. 
 # For debug builds always builds with some optimization
