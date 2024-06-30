@@ -106,10 +106,9 @@ fn setup_one_wire(one_wire_pin: OpenDrainPin, delay: &mut Delay) -> Result<Mutex
     Ok(one_wire)
 }
 
+#[inline]
 fn setup_ds18b20(one_wire_bus: &mut OneWire<OpenDrainPin>, sensor: &Ds18b20, delay: &mut Delay) -> Result<(), OneWireError<Infallible>> {
-    let data = sensor.read_data(one_wire_bus, delay)?;
-
-    sensor.set_config(data.alarm_temp_low, data.alarm_temp_high, Resolution::Bits10, one_wire_bus, delay)
+    sensor.set_config(0, 60, Resolution::Bits10, one_wire_bus, delay)
 }
 
 async fn measure_temperature(one_wire_result: &Result<Mutex::<CriticalSectionRawMutex, CriticalSectionData>, OneWireError<Infallible>>, delay: &mut Delay) -> Result<uom::si::f32::ThermodynamicTemperature, TemperatureError> {
