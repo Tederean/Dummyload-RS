@@ -8,11 +8,11 @@ use embassy_sync::blocking_mutex::Mutex;
 use embassy_sync::blocking_mutex::raw::CriticalSectionRawMutex;
 use embassy_sync::pubsub::PubSubChannel;
 use embassy_time::{Delay, Duration, Instant, Timer};
-use embedded_hal::pwm::SetDutyCycle;
 use embedded_hal_async::digital::Wait;
 use esp_hal::gpio::{AnyPin, Floating, GpioPin, Input, InputOnlyAnalogPinType, InputOutputAnalogPinType, OpenDrain, Output, Unknown};
 use esp_hal::ledc::channel::Channel;
 use esp_hal::ledc::HighSpeed;
+use esp_hal::prelude::_esp_hal_ledc_channel_ChannelHW;
 use one_wire_bus::{Address, OneWire, OneWireError};
 use uom::si::f32::{ThermodynamicTemperature, AngularVelocity, Time, Ratio, Angle};
 use uom::si::thermodynamic_temperature;
@@ -188,16 +188,16 @@ async fn measure_cycle_us(rpm_pin: &mut FloatingInputPin) -> u64 {
 fn adjust_fan_power(pwm_channel: &mut PwmChannel, temperature_result: &Result<ThermodynamicTemperature, TemperatureError>) -> Ratio {
         match temperature_result {
             Ok(temperature) => {
-                let duty_cycle = f32::clamp(3.5f32 * temperature.get::<thermodynamic_temperature::degree_celsius>() - 75.0f32, 30.0f32, 100.0f32);
+                let duty_cycle_ratio = f32::clamp(0.035f32 * temperature.get::<thermodynamic_temperature::degree_celsius>() - 0.75f32, 0.3f32, 1.0f32);
 
-                pwm_channel.set_duty_cycle_percent(duty_cycle as u8).unwrap();
+                pwm_channel.set_duty_hw((duty_cycle_ratio * 1024.0f32) as u32);
 
-                Ratio::new::<ratio::percent>(duty_cycle)
+                Ratio::new::<ratio::ratio>(duty_cycle_ratio)
             },
             Err(_) => {
-                pwm_channel.set_duty_cycle_percent(100).unwrap();
+                pwm_channel.set_duty_hw(1024);
 
-                Ratio::new::<ratio::percent>(100.0f32)
+                Ratio::new::<ratio::ratio>(1.0f32)
             },
         }
 }
