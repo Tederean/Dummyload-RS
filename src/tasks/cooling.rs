@@ -96,7 +96,7 @@ fn setup_one_wire(one_wire_pin: OpenDrainPin, delay: &mut Delay) -> Result<OneWi
 
     let one_wire_mutex = OneWireMutex::new(OneWireData {
         bus: RefCell::new(OneWire::new(one_wire_pin)?),
-        resolution: Resolution::Bits12,
+        resolution: Resolution::Bits12, // Other resolutions are not working. Don't know why...
         sensors: [
             Ds18b20::new::<Infallible>(Address(12970953402624835368u64))?,
             Ds18b20::new::<Infallible>(Address(15132681223968980776u64))?,
@@ -132,7 +132,7 @@ async fn measure_temperature(one_wire_result: &Result<OneWireMutex, OneWireError
 
             }).map_err(|err| TemperatureError::StartMeasurementError(err))?;
 
-            Timer::after(Duration::from_millis((delay_duration_ms + 10) as u64)).await;
+            Timer::after(Duration::from_millis(delay_duration_ms as u64)).await;
 
             one_wire_mutex.lock(|one_wire| {
                 let mut one_wire_bus = one_wire.bus.borrow_mut();
@@ -155,7 +155,7 @@ async fn measure_temperature(one_wire_result: &Result<OneWireMutex, OneWireError
 }
 
 async fn measure_fan_speed(rpm_pin: &mut FloatingInputPin) -> Result<AngularVelocity, FanSpeedError> {
-    let timeout_future = Timer::after(Duration::from_millis(700));
+    let timeout_future = Timer::after(Duration::from_millis(750));
     let elapsed_us_future = measure_cycle_us(rpm_pin);
 
     match select(timeout_future, elapsed_us_future).await {
