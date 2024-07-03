@@ -49,6 +49,7 @@ type OneWireMutex = Mutex<CriticalSectionRawMutex, OneWireData>;
 
 struct OneWireData {
     bus: RefCell<OneWire<OpenDrainPin>>,
+    resolution: Resolution,
     sensors: [Ds18b20; 2],
 }
 
@@ -95,9 +96,10 @@ fn setup_one_wire(one_wire_pin: OpenDrainPin, delay: &mut Delay) -> Result<OneWi
 
     let one_wire_mutex = OneWireMutex::new(OneWireData {
         bus: RefCell::new(OneWire::new(one_wire_pin)?),
+        resolution: Resolution::Bits12,
         sensors: [
-            Ds18b20::new::<Infallible>(Address(12970953402624835368u64))?, // or maybe 2954247596452151988
-            Ds18b20::new::<Infallible>(Address(15132681223968980776u64))? // or maybe 2954331210875470546
+            Ds18b20::new::<Infallible>(Address(12970953402624835368u64))?,
+            Ds18b20::new::<Infallible>(Address(15132681223968980776u64))?,
         ],
     });
 
@@ -105,8 +107,11 @@ fn setup_one_wire(one_wire_pin: OpenDrainPin, delay: &mut Delay) -> Result<OneWi
         let mut one_wire_bus = one_wire.bus.borrow_mut();
 
         for sensor in &one_wire.sensors {
-            setup_ds18b20(&mut one_wire_bus, sensor, delay)?;
+            sensor.set_config(0, 60, one_wire.resolution, &mut one_wire_bus, delay)?;
         }
+
+        ds18b20::simultaneous_save_to_eeprom(&mut one_wire_bus, delay)?;
+        ds18b20::simultaneous_recall_from_eeprom(&mut one_wire_bus, delay)?;
 
         Ok(())
     })?;
@@ -114,26 +119,20 @@ fn setup_one_wire(one_wire_pin: OpenDrainPin, delay: &mut Delay) -> Result<OneWi
     Ok(one_wire_mutex)
 }
 
-#[inline]
-fn setup_ds18b20(one_wire_bus: &mut OneWire<OpenDrainPin>, sensor: &Ds18b20, delay: &mut Delay) -> Result<(), OneWireError<Infallible>> {
-    sensor.set_config(0, 60, Resolution::Bits10, one_wire_bus, delay)
-}
-
 async fn measure_temperature(one_wire_result: &Result<OneWireMutex, OneWireError<Infallible>>, delay: &mut Delay) -> Result<ThermodynamicTemperature, TemperatureError> {
     match one_wire_result {
         Err(err) => Err(TemperatureError::SetupError(err.clone())),
         Ok(one_wire_mutex) => {
-            one_wire_mutex.lock(|one_wire| {
+            let delay_duration_ms = one_wire_mutex.lock(|one_wire| {
                 let mut one_wire_bus = one_wire.bus.borrow_mut();
 
-                for sensor in &one_wire.sensors {
-                    sensor.start_temp_measurement(&mut one_wire_bus, delay)?;
-                }
+                ds18b20::start_simultaneous_temp_measurement(&mut one_wire_bus, delay)?;
 
-                Ok(())
+                Ok(one_wire.resolution.max_measurement_time_millis())
+
             }).map_err(|err| TemperatureError::StartMeasurementError(err))?;
 
-            Timer::after(Duration::from_millis(190)).await; // Datasheet: 187.5 ms
+            Timer::after(Duration::from_millis((delay_duration_ms + 10) as u64)).await;
 
             one_wire_mutex.lock(|one_wire| {
                 let mut one_wire_bus = one_wire.bus.borrow_mut();
@@ -156,7 +155,7 @@ async fn measure_temperature(one_wire_result: &Result<OneWireMutex, OneWireError
 }
 
 async fn measure_fan_speed(rpm_pin: &mut FloatingInputPin) -> Result<AngularVelocity, FanSpeedError> {
-    let timeout_future = Timer::after(Duration::from_millis(300));
+    let timeout_future = Timer::after(Duration::from_millis(700));
     let elapsed_us_future = measure_cycle_us(rpm_pin);
 
     match select(timeout_future, elapsed_us_future).await {
