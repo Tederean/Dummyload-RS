@@ -185,18 +185,18 @@ async fn measure_cycle_us(rpm_pin: &mut FloatingInputPin) -> u64 {
 }
 
 fn adjust_fan_power(pwm_channel: &mut PwmChannel, temperature_result: &Result<ThermodynamicTemperature, TemperatureError>) -> Ratio {
-        match temperature_result {
-            Ok(temperature) => {
-                let duty_cycle_ratio = f32::clamp(0.035f32 * temperature.get::<thermodynamic_temperature::degree_celsius>() - 0.75f32, 0.3f32, 1.0f32);
+    match temperature_result {
+        Ok(temperature) => {
+            let duty_cycle_ratio = f32::clamp(0.035f32 * temperature.get::<thermodynamic_temperature::degree_celsius>() - 0.75f32, 0.3f32, 1.0f32);
 
-                pwm_channel.set_duty_hw((duty_cycle_ratio * 1024.0f32) as u32);
+            pwm_channel.set_duty_hw((duty_cycle_ratio * 1024.0f32) as u32);
 
-                Ratio::new::<ratio::ratio>(duty_cycle_ratio)
-            },
-            Err(_) => {
-                pwm_channel.set_duty_hw(1024);
+            Ratio::new::<ratio::ratio>(duty_cycle_ratio)
+        },
+        Err(_) => {
+            pwm_channel.set_duty_hw(1024);
 
-                Ratio::new::<ratio::ratio>(1.0f32)
-            },
-        }
+            Ratio::new::<ratio::ratio>(1.0f32)
+        },
+    }
 }

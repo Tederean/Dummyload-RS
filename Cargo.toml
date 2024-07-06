@@ -38,7 +38,7 @@ embedded-hal = "1.0.0"
 embedded-hal-async = "1.0.0"
 embedded-hal-nb = "1.0.0"
 uom = { version = "0.36.0", default-features = false, features = ["si", "f32"] }
-refinement = { git = "https://github.com/Tederean/refinement-rs" }
+refinement = { git = "https://github.com/Tederean/refinement-rs", default-features = false }
 ds18b20 = "0.1.1"
 one-wire-bus = "0.1.1"
 
